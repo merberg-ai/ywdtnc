@@ -1,57 +1,34 @@
 import urwid
-import queue
-import threading
 
-log_queue = queue.Queue()
-_ui_state = {
-    "callsign": "N0CALL",
-    "monitor": False,
-    "user": "anonymous"
-}
+status_line = urwid.Text("")
+input_edit = urwid.Edit("> ")
+output_box = urwid.Text("Welcome to ywdtnc\n")
+loop = None
+command_queue = None
 
-def set_ui_state(callsign, monitor, user):
-    _ui_state["callsign"] = callsign
-    _ui_state["monitor"] = monitor
-    _ui_state["user"] = user
+def set_ui_state(callsign, monitor_enabled, user):
+    status_line.set_text(f"{callsign} | MONITOR: {'ON' if monitor_enabled else 'OFF'} | USER: {user}")
 
-def launch_ui(command_handler, callsign):
-    def update_status():
-        return f"Callsign: {_ui_state['callsign']} | Monitor: {'ON' if _ui_state['monitor'] else 'OFF'} | User: {_ui_state['user']}"
+def on_input(key):
+    if key == "enter":
+        command = input_edit.edit_text.strip()
+        if command:
+            output_box.set_text(output_box.text + f"\n> {command}")
+            loop.draw_screen()
+            input_edit.set_edit_text("")
+            command_queue.put_nowait(command)
 
-    def on_input(key):
-        if key == "enter":
-            command = edit.edit_text.strip()
-            if command:
-                command_handler(command)
-                edit.set_edit_text("")
-                edit.set_edit_pos(0)
-
-    def handle_logs():
-        while True:
-            try:
-                msg = log_queue.get(timeout=0.1)
-                text.set_text(text.text + "\n" + msg)
-                loop.draw_screen()
-            except queue.Empty:
-                continue
-
-    text = urwid.Text("Welcome to ywdtnc!", align='left')
-    edit = urwid.Edit("> ")
-    footer = urwid.Text(update_status())
-
+def launch_ui(cmd_queue, callsign):
+    global loop, command_queue
+    command_queue = cmd_queue
+    set_ui_state(callsign, False, "anonymous")
     pile = urwid.Pile([
-        text,
+        urwid.LineBox(output_box),
         urwid.Divider(),
-        edit,
+        urwid.LineBox(input_edit),
         urwid.Divider(),
-        footer
+        urwid.LineBox(status_line)
     ])
-
-    loop = urwid.MainLoop(
-        urwid.Filler(pile, valign='top'),
-        unhandled_input=on_input
-    )
-
-    # Background log updater
-    threading.Thread(target=handle_logs, daemon=True).start()
+    fill = urwid.Filler(pile, valign="top")
+    loop = urwid.MainLoop(fill, unhandled_input=on_input)
     loop.run()
