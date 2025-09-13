@@ -10,8 +10,8 @@ async def monitor_loop(kiss: KissTCP):
             frame = await kiss.receive()
             if frame:
                 hex_str = " ".join(f"{b:02X}" for b in frame)
-                print(f"[RAW] {hex_str}")
-                logging.info(f"[RAW] {hex_str}")
+                print(f"[MON] {hex_str}")
+                logging.info(f"[MON] {hex_str}")
         except Exception as e:
             print(f"[MONITOR ERROR] {e}")
             await asyncio.sleep(1)
