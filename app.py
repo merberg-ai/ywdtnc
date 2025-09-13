@@ -3,7 +3,6 @@ import json
 import os
 import signal
 from ui import launch_ui, set_ui_state
-from monitor import start_monitoring
 from utils import hash_password, check_password
 
 CONFIG_FILE = "config.json"
