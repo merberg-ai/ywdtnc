@@ -37,6 +37,7 @@ class TNCState:
         self.unproto_dest = None
         self.unproto_path = []
         self.monitor_on = True
+        self.monitor_detail = False  # new toggle
         self.beacon_every: int | None = None
         self.beacon_text: bytes | None = None
         self.txdelay_ms: int | None = None
@@ -63,6 +64,7 @@ class TNCState:
             path_str = sect.get("unproto_path", fallback="")
             self.unproto_path = [p for p in path_str.split(",") if p] if path_str else []
             self.monitor_on = sect.getboolean("monitor_on", fallback=True)
+            self.monitor_detail = sect.getboolean("monitor_detail", fallback=False)
             self.txdelay_ms = sect.getint("txdelay_ms", fallback=None)
             if sect.get("beacon_every", fallback="").strip():
                 self.beacon_every = sect.getint("beacon_every", fallback=None)
@@ -80,6 +82,7 @@ class TNCState:
             "unproto_dest": self.unproto_dest or "",
             "unproto_path": ",".join(self.unproto_path) if self.unproto_path else "",
             "monitor_on": "true" if self.monitor_on else "false",
+            "monitor_detail": "true" if self.monitor_detail else "false",
             "txdelay_ms": str(self.txdelay_ms) if self.txdelay_ms is not None else "",
             "beacon_every": str(self.beacon_every) if self.beacon_every is not None else "",
             "beacon_text": (
@@ -149,10 +152,17 @@ class TNCState:
                 self.monitor_on = False
                 self._save_config()
                 return True, "MONITOR OFF"
+            elif arg.startswith("DETAIL"):
+                parts = arg.split()
+                if len(parts) == 2 and parts[1] in ("ON", "OFF"):
+                    self.monitor_detail = parts[1] == "ON"
+                    self._save_config()
+                    return True, f"MONITOR DETAIL {'ON' if self.monitor_detail else 'OFF'}"
+                return True, f"MONITOR DETAIL is {'ON' if self.monitor_detail else 'OFF'}"
             else:
                 return True, f"MONITOR is {'ON' if self.monitor_on else 'OFF'}"
 
-        # other commands (UNPROTO, TXDELAY, BEACON, CONNECT, DISCONNECT) would go here...
+        # other commands would go here...
         return False, None
 
     # ----------------- Converse/UI TX -----------------
@@ -200,7 +210,6 @@ class TNCState:
                 elif ctl == CTL_DM:
                     label = "DM"
                 else:
-                    # Interpret I and S frames
                     if ctl & 0x01 == 0:
                         ns = (ctl >> 1) & 0x07
                         nr = (ctl >> 5) & 0x07
@@ -227,14 +236,14 @@ class TNCState:
                 print(header)
 
                 if parsed["info"]:
-                    try:
-                        text = parsed["info"].decode("utf-8")
-                        if all(32 <= ord(ch) < 127 or ch in "\r\n\t" for ch in text):
-                            safe = text.replace("\r", "\\r").replace("\n", "\\n")
-                            print("   " + safe)
-                        else:
-                            raise UnicodeDecodeError("utf-8", b"", 0, 1, "non-printable")
-                    except Exception:
-                        print("   [data] " + parsed["info"].hex())
+                    # Always show human-readable
+                    text = parsed["info"].decode("latin-1", "replace")
+                    text = text.replace("\r", "\n").rstrip()
+                    if text:
+                        for line in text.splitlines():
+                            print("   " + line)
+                    # Optionally show hex
+                    if self.monitor_detail:
+                        print("   [hex] " + parsed["info"].hex())
 
                 print("cmd: ", end="", flush=True)
