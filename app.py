@@ -38,7 +38,19 @@ async def config_wizard():
             print("Passwords do not match. Try again.")
     config['sysop_password'] = hash_password(password)
     config['direwolf_host'] = input("Enter Direwolf LAN address (e.g., 127.0.0.1): ").strip()
-    config['direwolf_port'] = int(input("Enter Direwolf TCP port (e.g., 8001): ").strip())
+
+    # 🛠 Port with fallback to default 8001
+    while True:
+        port_input = input("Enter Direwolf TCP port (default 8001): ").strip()
+        if port_input == "":
+            config['direwolf_port'] = 8001
+            break
+        elif port_input.isdigit():
+            config['direwolf_port'] = int(port_input)
+            break
+        else:
+            print("Invalid port number. Please enter a numeric value.")
+
     log_pref = input("Enable logging to file? (y/n): ").strip().lower()
     config['logging'] = log_pref == 'y'
     config['logfile'] = "ywdtnc.log"
