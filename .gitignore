@@ -1,2 +1,5 @@
+.venv
+mfj1270.ini
+config.json
 __pycache__/
 *.pyc

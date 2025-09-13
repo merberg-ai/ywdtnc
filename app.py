@@ -4,7 +4,7 @@ import sys
 import signal
 from tnc_state import TNCState
 
-BANNER = "MFJ-1270 Python Emulator (MVP) 0.2 — CMD mode. Type HELP."
+BANNER = "MFJ-1270 Python Emulator (MVP) 0.3 — CMD mode. Type HELP."
 
 class Shell:
     def __init__(self, tnc: TNCState):
@@ -15,6 +15,7 @@ class Shell:
 
     async def start(self):
         print(BANNER)
+        await self.tnc.open()
         self._rx_task = asyncio.create_task(self.tnc.rx_loop())
         if self.tnc.beacon_every is not None:
             self._beacon_task = asyncio.create_task(self.tnc.beacon_loop())
@@ -88,7 +89,7 @@ class Shell:
 
     def print_help(self):
         print(
-            "TNC-2 style commands (MVP 0.2):\n"
+            "TNC-2 style commands (MVP 0.3):\n"
             "  MYCALL <CALL>                   Set your callsign-SSID (e.g., N0CALL-7)\n"
             "  UNPROTO <DEST> [VIA PATH]       Set UI dest & digipeater path\n"
             "  MONITOR ON|OFF                  Toggle monitor of heard frames\n"
@@ -97,15 +98,13 @@ class Shell:
             "  CONNECT <CALL> [VIA PATH]       LAPB handshake (SABM/UA) to peer\n"
             "  DISCONNECT                      Send DISC and await UA\n"
             "  CONVERSE (or C)                 Enter converse (UI) mode\n"
+            "  RECONNECT                       Reconnect to Direwolf using mfj1270.ini\n"
             "  HELP                            This list\n"
             "  QUIT                            Exit\n"
         )
 
 async def main():
-    host = "127.0.0.1"
-    port = 8001
-    tnc = TNCState(host=host, port=port)
-    await tnc.open()
+    tnc = TNCState()
     shell = Shell(tnc)
     await shell.start()
 
