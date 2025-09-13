@@ -1,1 +1,1 @@
-# Placeholder for TNC command handling logic
+# Placeholder: TNC command handling will go here

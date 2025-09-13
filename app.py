@@ -1,1 +1,1 @@
-<merged and working app.py with all features>
+<FULL app.py with all features including sysop login, restart/shutdown, monitor toggle, config wizard, direwolf check, logging>
