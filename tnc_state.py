@@ -37,7 +37,7 @@ class TNCState:
         self.unproto_dest = None
         self.unproto_path = []
         self.monitor_on = True
-        self.monitor_detail = False  # new toggle
+        self.monitor_detail = False
         self.beacon_every: int | None = None
         self.beacon_text: bytes | None = None
         self.txdelay_ms: int | None = None
@@ -142,6 +142,23 @@ class TNCState:
             self._save_config()
             return True, f"MYCALL set to {self.mycall}"
 
+        if cmd == "UNPROTO":
+            if not rest.strip():
+                if self.unproto_dest:
+                    path = ",".join(self.unproto_path) if self.unproto_path else ""
+                    return True, f"UNPROTO {self.unproto_dest} VIA {path}" if path else f"UNPROTO {self.unproto_dest}"
+                else:
+                    return True, "UNPROTO not set"
+            dest, path = _parse_via(rest)
+            if not dest:
+                return True, "Usage: UNPROTO <DEST> [VIA DIGI1,DIGI2,...]"
+            self.unproto_dest = dest
+            self.unproto_path = path
+            self._save_config()
+            if path:
+                return True, f"UNPROTO {self.unproto_dest} VIA {','.join(path)}"
+            return True, f"UNPROTO {self.unproto_dest}"
+
         if cmd == "MONITOR":
             arg = rest.strip().upper()
             if arg in ("ON", "1", "TRUE"):
@@ -162,7 +179,6 @@ class TNCState:
             else:
                 return True, f"MONITOR is {'ON' if self.monitor_on else 'OFF'}"
 
-        # other commands would go here...
         return False, None
 
     # ----------------- Converse/UI TX -----------------
@@ -242,7 +258,6 @@ class TNCState:
                     if text:
                         for line in text.splitlines():
                             print("   " + line)
-                    # Optionally show hex
                     if self.monitor_detail:
                         print("   [hex] " + parsed["info"].hex())
 

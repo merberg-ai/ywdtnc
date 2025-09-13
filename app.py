@@ -4,7 +4,7 @@ import sys
 import signal
 from tnc_state import TNCState
 
-BANNER = "MFJ-1270 Python Emulator (MVP) 0.3 — CMD mode. Type HELP."
+BANNER = "MFJ-1270 Python Emulator (MVP) 0.4 — CMD mode. Type HELP."
 
 class Shell:
     def __init__(self, tnc: TNCState):
@@ -89,10 +89,11 @@ class Shell:
 
     def print_help(self):
         print(
-            "TNC-2 style commands (MVP 0.3):\n"
+            "TNC-2 style commands (MVP 0.4):\n"
             "  MYCALL <CALL>                   Set your callsign-SSID (e.g., N0CALL-7)\n"
             "  UNPROTO <DEST> [VIA PATH]       Set UI dest & digipeater path\n"
             "  MONITOR ON|OFF                  Toggle monitor of heard frames\n"
+            "  MONITOR DETAIL ON|OFF           Toggle hex dump alongside decoded text\n"
             "  TXDELAY <ms>                    Set TXDELAY (KISS)\n"
             "  BEACON EVERY <sec> TEXT <t>     Periodic UI beacon\n"
             "  CONNECT <CALL> [VIA PATH]       LAPB handshake (SABM/UA) to peer\n"
