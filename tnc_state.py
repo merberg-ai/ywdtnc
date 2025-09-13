@@ -139,7 +139,20 @@ class TNCState:
             self._save_config()
             return True, f"MYCALL set to {self.mycall}"
 
-        # other commands (UNPROTO, MONITOR, TXDELAY, BEACON, CONNECT, DISCONNECT) unchanged...
+        if cmd == "MONITOR":
+            arg = rest.strip().upper()
+            if arg in ("ON", "1", "TRUE"):
+                self.monitor_on = True
+                self._save_config()
+                return True, "MONITOR ON"
+            elif arg in ("OFF", "0", "FALSE"):
+                self.monitor_on = False
+                self._save_config()
+                return True, "MONITOR OFF"
+            else:
+                return True, f"MONITOR is {'ON' if self.monitor_on else 'OFF'}"
+
+        # other commands (UNPROTO, TXDELAY, BEACON, CONNECT, DISCONNECT) would go here...
         return False, None
 
     # ----------------- Converse/UI TX -----------------
@@ -189,7 +202,6 @@ class TNCState:
                 else:
                     # Interpret I and S frames
                     if ctl & 0x01 == 0:
-                        # I-frame
                         ns = (ctl >> 1) & 0x07
                         nr = (ctl >> 5) & 0x07
                         label = "I"
