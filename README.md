@@ -14,7 +14,7 @@
 ## Usage
 
 ```bash
-python tnc2_cli.py
+python app.py
 ```
 
 Available commands:
