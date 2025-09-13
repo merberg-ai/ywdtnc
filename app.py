@@ -93,8 +93,7 @@ async def main():
     asyncio.create_task(conditional_monitor())
 
     def shutdown_handler(sig, frame):
-        print("
-[SHUTDOWN] Goodbye.")
+        print("\n[SHUTDOWN] Goodbye.")
         os._exit(0)
 
     signal.signal(signal.SIGINT, shutdown_handler)
