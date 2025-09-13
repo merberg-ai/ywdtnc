@@ -20,7 +20,11 @@ class KissTCP:
         await self.writer.drain()
 
     async def receive(self):
-        return await self.reader.read(1024)
+        try:
+            data = await self.reader.read(1024)
+            return data if data else None
+        except Exception:
+            return None
 
     async def close(self):
         if self.writer:

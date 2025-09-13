@@ -4,6 +4,18 @@ from kiss_tcp import KissTCP
 from tnc_commands import TNCCommandParser
 from config import load_config, save_config
 
+async def monitor_loop(kiss: KissTCP):
+    while True:
+        try:
+            frame = await kiss.receive()
+            if frame:
+                hex_str = " ".join(f"{b:02X}" for b in frame)
+                print(f"[RAW] {hex_str}")
+                logging.info(f"[RAW] {hex_str}")
+        except Exception as e:
+            print(f"[MONITOR ERROR] {e}")
+            await asyncio.sleep(1)
+
 async def main():
     config = load_config()
 
@@ -28,6 +40,9 @@ async def main():
     print("Type 'help' for available commands.\n")
 
     parser = TNCCommandParser(kiss, config)
+
+    # Start live packet monitor in background
+    asyncio.create_task(monitor_loop(kiss))
 
     while True:
         try:
