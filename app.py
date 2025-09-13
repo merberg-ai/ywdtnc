@@ -1,12 +1,27 @@
 import asyncio
+import logging
 from kiss_tcp import KissTCP
 from tnc_commands import TNCCommandParser
 from config import load_config, save_config
 
 async def main():
     config = load_config()
+
+    if config.get("LOGGING", False):
+        logfile = config.get("LOGFILE", "ywdtnc.log")
+        logging.basicConfig(filename=logfile, level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+    else:
+        logging.basicConfig(level=logging.CRITICAL)
+
     kiss = KissTCP(config["DIREWOLF_ADDR"], config["DIREWOLF_PORT"])
-    await kiss.connect()
+
+    success = await kiss.connect()
+    if success:
+        logging.info(f"Direwolf connection successful: {config['DIREWOLF_ADDR']}:{config['DIREWOLF_PORT']}")
+        print(f"[INFO] Connected to Direwolf at {config['DIREWOLF_ADDR']}:{config['DIREWOLF_PORT']}")
+    else:
+        logging.error("Direwolf connection failed.")
+        print(f"[ERROR] Could not connect to Direwolf at {config['DIREWOLF_ADDR']}:{config['DIREWOLF_PORT']}")
 
     print("YWD-TNC (Python TAPR TNC-2 Emulator)")
     print("Version 1.0 by KJ6YWD")
