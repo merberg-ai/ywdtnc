@@ -9,7 +9,7 @@ from ax25 import parse_ax25
 from utils import hash_password, check_password
 import logging
 
-CONFIG_FILE = "ywdtnc_config.json"
+CONFIG_FILE = "config.json"
 
 def load_config():
     if not os.path.exists(CONFIG_FILE):
@@ -37,7 +37,10 @@ async def config_wizard():
         else:
             print("Passwords do not match. Try again.")
     config['sysop_password'] = hash_password(password)
-    config['direwolf_host'] = input("Enter Direwolf LAN address (e.g., 127.0.0.1): ").strip()
+
+    # 🧠 Prefill host default = 127.0.0.1
+    host_input = input("Enter Direwolf LAN address (default 127.0.0.1): ").strip()
+    config['direwolf_host'] = host_input if host_input else "127.0.0.1"
 
     # 🛠 Port with fallback to default 8001
     while True:
