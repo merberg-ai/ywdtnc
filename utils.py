@@ -1,19 +1,20 @@
 import hashlib
 import os
+import base64
 
-SALT_LENGTH = 16
+def hash_password(password: str, salt: bytes = None) -> str:
+    if not salt:
+        salt = os.urandom(16)  # Generate a 16-byte random salt
+    dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+    return base64.b64encode(salt + dk).decode()
 
-def hash_password(password):
-    salt = os.urandom(SALT_LENGTH)
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
-    return salt.hex() + ":" + pwd_hash.hex()
-
-def check_password(password, stored_hash):
+def check_password(password: str, stored_hash: str) -> bool:
     try:
-        salt_hex, hash_hex = stored_hash.split(":")
-        salt = bytes.fromhex(salt_hex)
-        stored_bytes = bytes.fromhex(hash_hex)
-        pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
-        return pwd_hash == stored_bytes
-    except Exception:
+        decoded = base64.b64decode(stored_hash.encode())
+        salt = decoded[:16]
+        stored_dk = decoded[16:]
+        new_dk = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100_000)
+        return new_dk == stored_dk
+    except Exception as e:
+        print(f"[ERROR] Password check failed: {e}")
         return False
