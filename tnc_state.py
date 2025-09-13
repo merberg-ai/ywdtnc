@@ -1,166 +1,3 @@
-import asyncio
-import shlex
-import configparser
-import os
-from kiss import KISSClient
-from ax25 import (
-    build_ui_frame,
-    build_u_frame,
-    parse_ax25,
-    CTL_UI,
-    CTL_SABM,
-    CTL_UA,
-    CTL_DISC,
-    CTL_DM,
-)
-
-def _parse_via(rest: str):
-    parts = rest.strip().split()
-    if not parts:
-        return None, []
-    dest = parts[0].upper()
-    path = []
-    if len(parts) >= 2 and parts[1].upper() == "VIA":
-        path = [p.strip().upper().rstrip(",") for p in parts[2:]]
-        path = [p for p in (",".join(path)).split(",") if p]
-    return dest, path
-
-CFG_FILE = "mfj1270.ini"
-
-class TNCState:
-    def __init__(self):
-        self.kiss_host = "127.0.0.1"
-        self.kiss_port = 8001
-        self.kiss: KISSClient | None = None
-
-        self.mycall = "N0CALL"
-        self.unproto_dest = None
-        self.unproto_path = []
-        self.monitor_on = True
-        self.beacon_every: int | None = None
-        self.beacon_text: bytes | None = None
-        self.txdelay_ms: int | None = None
-
-        self.converse = False
-        self.link_up = False
-        self.link_peer = None
-        self.link_path = []
-        self._ua_event = asyncio.Event()
-        self._disc_ua_event = asyncio.Event()
-
-        self._load_config()
-
-    # ----------------- Config persistence -----------------
-    def _load_config(self):
-        cfg = configparser.ConfigParser()
-        if not os.path.exists(CFG_FILE):
-            return
-        try:
-            cfg.read(CFG_FILE)
-            sect = cfg["tnc"]
-            self.mycall = sect.get("mycall", self.mycall)
-            self.unproto_dest = sect.get("unproto_dest", fallback=None) or None
-            path_str = sect.get("unproto_path", fallback="")
-            self.unproto_path = [p for p in path_str.split(",") if p] if path_str else []
-            self.monitor_on = sect.getboolean("monitor_on", fallback=True)
-            self.txdelay_ms = sect.getint("txdelay_ms", fallback=None)
-            if sect.get("beacon_every", fallback="").strip():
-                self.beacon_every = sect.getint("beacon_every", fallback=None)
-            bt = sect.get("beacon_text", fallback=None)
-            self.beacon_text = bt.encode("utf-8") if bt else None
-            self.kiss_host = sect.get("kiss_host", self.kiss_host)
-            self.kiss_port = sect.getint("kiss_port", fallback=self.kiss_port)
-        except Exception:
-            pass
-
-    def _save_config(self):
-        cfg = configparser.ConfigParser()
-        cfg["tnc"] = {
-            "mycall": self.mycall,
-            "unproto_dest": self.unproto_dest or "",
-            "unproto_path": ",".join(self.unproto_path) if self.unproto_path else "",
-            "monitor_on": "true" if self.monitor_on else "false",
-            "txdelay_ms": str(self.txdelay_ms) if self.txdelay_ms is not None else "",
-            "beacon_every": str(self.beacon_every) if self.beacon_every is not None else "",
-            "beacon_text": (
-                self.beacon_text.decode("utf-8", "ignore") if self.beacon_text else ""
-            ),
-            "kiss_host": self.kiss_host,
-            "kiss_port": str(self.kiss_port),
-        }
-        with open(CFG_FILE, "w", encoding="utf-8") as f:
-            cfg.write(f)
-
-    # ----------------- Lifecycle -----------------
-    async def open(self):
-        try:
-            self.kiss = KISSClient(self.kiss_host, self.kiss_port)
-            await self.kiss.open()
-            if self.txdelay_ms is not None:
-                await self.kiss.set_txdelay(self.txdelay_ms)
-            print(f"*** Connected to Direwolf KISS at {self.kiss_host}:{self.kiss_port}")
-            return True
-        except Exception as e:
-            print(
-                f"*** ERROR: Could not connect to Direwolf KISS server at {self.kiss_host}:{self.kiss_port}"
-            )
-            print(f"*** {e}")
-            self.kiss = None
-            return False
-
-    async def close(self):
-        if self.kiss:
-            await self.kiss.close()
-            self.kiss = None
-
-    async def reconnect(self):
-        await self.close()
-        self._load_config()
-        success = await self.open()
-        return success
-
-    async def set_converse(self, on: bool):
-        self.converse = on
-
-    # ----------------- Commands -----------------
-    async def handle_command(self, cmd: str, rest: str):
-        if cmd == "RECONNECT":
-            success = await self.reconnect()
-            if success:
-                return True, f"*** Reconnected to {self.kiss_host}:{self.kiss_port}"
-            else:
-                return True, f"*** RECONNECT failed for {self.kiss_host}:{self.kiss_port}"
-
-        if cmd == "MYCALL":
-            call = rest.strip().upper()
-            if not call:
-                return True, f"MYCALL: {self.mycall}"
-            self.mycall = call
-            self._save_config()
-            return True, f"MYCALL set to {self.mycall}"
-
-        # other commands (UNPROTO, MONITOR, TXDELAY, BEACON, CONNECT, DISCONNECT) unchanged...
-        return False, None
-
-    # ----------------- Converse/UI TX -----------------
-    async def send_converse_line(self, line: str):
-        if not self.unproto_dest:
-            print("UNPROTO not set.")
-            return
-        info = line.encode("utf-8", "ignore")
-        frame = build_ui_frame(self.mycall, self.unproto_dest, self.unproto_path, info)
-        if self.kiss:
-            await self.kiss.send_data(frame)
-
-    async def beacon_loop(self):
-        while self.beacon_every is not None:
-            if self.beacon_text and self.unproto_dest and self.kiss:
-                frame = build_ui_frame(
-                    self.mycall, self.unproto_dest, self.unproto_path, self.beacon_text
-                )
-                await self.kiss.send_data(frame)
-            await asyncio.sleep(self.beacon_every)
-
     # ----------------- RX/Monitor -----------------
     async def rx_loop(self):
         if not self.kiss:
@@ -171,43 +8,63 @@ class TNCState:
                 continue
 
             ctl = parsed["ctl"]
+            path = f" VIA {','.join(parsed['path'])}" if parsed["path"] else ""
+
+            # --- Monitor output ---
             if self.monitor_on:
-                path = f" VIA {','.join(parsed['path'])}" if parsed["path"] else ""
+                label = None
+                seq_info = ""
                 if ctl == CTL_UI:
-                    try:
-                        text = parsed["info"].decode("utf-8", "ignore")
-                    except Exception:
-                        text = parsed["info"].hex()
-                    print(
-                        f"\nM: {parsed['src']} > {parsed['dest']}{path} UI PID=0x{parsed['pid']:02X}"
-                    )
-                    if text:
-                        print(f"   {text}")
+                    label = "UI"
                 elif ctl == CTL_SABM:
-                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} SABM")
-                    ua = build_u_frame(
-                        src=self.mycall, dest=parsed["src"], path=parsed["path"], ctl=CTL_UA
-                    )
-                    if self.kiss:
-                        await self.kiss.send_data(ua)
+                    label = "SABM"
                 elif ctl == CTL_UA:
-                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} UA")
+                    label = "UA"
                 elif ctl == CTL_DISC:
-                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} DISC")
-                    ua = build_u_frame(
-                        src=self.mycall, dest=parsed["src"], path=parsed["path"], ctl=CTL_UA
-                    )
-                    if self.kiss:
-                        await self.kiss.send_data(ua)
-                    if self.link_up and self.link_peer == parsed["src"]:
-                        self.link_up = False
-                        self.link_peer = None
-                        self.link_path = []
-                        print("*** DISCONNECTED (by peer)")
+                    label = "DISC"
                 elif ctl == CTL_DM:
-                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} DM")
+                    label = "DM"
                 else:
-                    print(
-                        f"\nM: {parsed['src']} > {parsed['dest']}{path} CTL=0x{ctl:02X}"
-                    )
+                    # Interpret I and S frames
+                    if ctl & 0x01 == 0:
+                        # I frame: low bit 0, N(S) bits 7–1, N(R) bits 7–1
+                        ns = (ctl >> 1) & 0x07
+                        nr = (parsed["info"][0] >> 1) & 0x07 if parsed["info"] else 0
+                        label = "I"
+                        seq_info = f" N(S)={ns} N(R)={nr}"
+                    elif ctl & 0x03 == 0x01:
+                        # S frame
+                        s_type = (ctl >> 2) & 0x03
+                        nr = (ctl >> 5) & 0x07
+                        if s_type == 0:
+                            label = "RR"
+                        elif s_type == 1:
+                            label = "RNR"
+                        elif s_type == 2:
+                            label = "REJ"
+                        else:
+                            label = "S?"
+                        seq_info = f" N(R)={nr}"
+                    else:
+                        label = f"CTL=0x{ctl:02X}"
+
+                header = f"\nM: {parsed['src']} > {parsed['dest']}{path} {label}{seq_info}"
+
+                if parsed["pid"] is not None and ctl == CTL_UI:
+                    header += f" PID=0x{parsed['pid']:02X}"
+
+                print(header)
+
+                # Try decoding info field if present
+                if parsed["info"]:
+                    try:
+                        text = parsed["info"].decode("utf-8")
+                        if all(32 <= ord(ch) < 127 or ch in "\r\n\t" for ch in text):
+                            print("   " + text.replace("\r", "\\r").replace("\n", "\\n"))
+                        else:
+                            raise UnicodeDecodeError("utf-8", b"", 0, 1, "non-printable")
+                    except Exception:
+                        print("   [data] " + parsed["info"].hex())
+
+                # Restore prompt
                 print("cmd: ", end="", flush=True)
