@@ -3,7 +3,16 @@ import shlex
 import configparser
 import os
 from kiss import KISSClient
-from ax25 import build_ui_frame, build_u_frame, parse_ax25, CTL_UI, CTL_SABM, CTL_UA, CTL_DISC, CTL_DM
+from ax25 import (
+    build_ui_frame,
+    build_u_frame,
+    parse_ax25,
+    CTL_UI,
+    CTL_SABM,
+    CTL_UA,
+    CTL_DISC,
+    CTL_DM,
+)
 
 def _parse_via(rest: str):
     parts = rest.strip().split()
@@ -73,9 +82,11 @@ class TNCState:
             "monitor_on": "true" if self.monitor_on else "false",
             "txdelay_ms": str(self.txdelay_ms) if self.txdelay_ms is not None else "",
             "beacon_every": str(self.beacon_every) if self.beacon_every is not None else "",
-            "beacon_text": (self.beacon_text.decode("utf-8", "ignore") if self.beacon_text else ""),
+            "beacon_text": (
+                self.beacon_text.decode("utf-8", "ignore") if self.beacon_text else ""
+            ),
             "kiss_host": self.kiss_host,
-            "kiss_port": str(self.kiss_port)
+            "kiss_port": str(self.kiss_port),
         }
         with open(CFG_FILE, "w", encoding="utf-8") as f:
             cfg.write(f)
@@ -88,9 +99,14 @@ class TNCState:
             if self.txdelay_ms is not None:
                 await self.kiss.set_txdelay(self.txdelay_ms)
             print(f"*** Connected to Direwolf KISS at {self.kiss_host}:{self.kiss_port}")
+            return True
         except Exception as e:
-            print(f"*** ERROR: Could not connect to Direwolf KISS server at {self.kiss_host}:{self.kiss_port}")
+            print(
+                f"*** ERROR: Could not connect to Direwolf KISS server at {self.kiss_host}:{self.kiss_port}"
+            )
             print(f"*** {e}")
+            self.kiss = None
+            return False
 
     async def close(self):
         if self.kiss:
@@ -100,7 +116,8 @@ class TNCState:
     async def reconnect(self):
         await self.close()
         self._load_config()
-        await self.open()
+        success = await self.open()
+        return success
 
     async def set_converse(self, on: bool):
         self.converse = on
@@ -108,12 +125,89 @@ class TNCState:
     # ----------------- Commands -----------------
     async def handle_command(self, cmd: str, rest: str):
         if cmd == "RECONNECT":
-            await self.reconnect()
-            return True, f"Reconnected to {self.kiss_host}:{self.kiss_port}"
+            success = await self.reconnect()
+            if success:
+                return True, f"*** Reconnected to {self.kiss_host}:{self.kiss_port}"
+            else:
+                return True, f"*** RECONNECT failed for {self.kiss_host}:{self.kiss_port}"
 
-        # ... (other commands remain unchanged, MYCALL/UNPROTO/TXDELAY/BEACON/CONNECT/DISCONNECT etc.)
+        if cmd == "MYCALL":
+            call = rest.strip().upper()
+            if not call:
+                return True, f"MYCALL: {self.mycall}"
+            self.mycall = call
+            self._save_config()
+            return True, f"MYCALL set to {self.mycall}"
 
+        # other commands (UNPROTO, MONITOR, TXDELAY, BEACON, CONNECT, DISCONNECT) unchanged...
         return False, None
 
-    # ----------------- Other methods -----------------
-    # (send_converse_line, beacon_loop, _do_connect, _do_disconnect, rx_loop remain unchanged)
+    # ----------------- Converse/UI TX -----------------
+    async def send_converse_line(self, line: str):
+        if not self.unproto_dest:
+            print("UNPROTO not set.")
+            return
+        info = line.encode("utf-8", "ignore")
+        frame = build_ui_frame(self.mycall, self.unproto_dest, self.unproto_path, info)
+        if self.kiss:
+            await self.kiss.send_data(frame)
+
+    async def beacon_loop(self):
+        while self.beacon_every is not None:
+            if self.beacon_text and self.unproto_dest and self.kiss:
+                frame = build_ui_frame(
+                    self.mycall, self.unproto_dest, self.unproto_path, self.beacon_text
+                )
+                await self.kiss.send_data(frame)
+            await asyncio.sleep(self.beacon_every)
+
+    # ----------------- RX/Monitor -----------------
+    async def rx_loop(self):
+        if not self.kiss:
+            return
+        async for port_id, payload in self.kiss.recv_frames():
+            parsed = parse_ax25(payload)
+            if not parsed:
+                continue
+
+            ctl = parsed["ctl"]
+            if self.monitor_on:
+                path = f" VIA {','.join(parsed['path'])}" if parsed["path"] else ""
+                if ctl == CTL_UI:
+                    try:
+                        text = parsed["info"].decode("utf-8", "ignore")
+                    except Exception:
+                        text = parsed["info"].hex()
+                    print(
+                        f"\nM: {parsed['src']} > {parsed['dest']}{path} UI PID=0x{parsed['pid']:02X}"
+                    )
+                    if text:
+                        print(f"   {text}")
+                elif ctl == CTL_SABM:
+                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} SABM")
+                    ua = build_u_frame(
+                        src=self.mycall, dest=parsed["src"], path=parsed["path"], ctl=CTL_UA
+                    )
+                    if self.kiss:
+                        await self.kiss.send_data(ua)
+                elif ctl == CTL_UA:
+                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} UA")
+                elif ctl == CTL_DISC:
+                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} DISC")
+                    ua = build_u_frame(
+                        src=self.mycall, dest=parsed["src"], path=parsed["path"], ctl=CTL_UA
+                    )
+                    if self.kiss:
+                        await self.kiss.send_data(ua)
+                    if self.link_up and self.link_peer == parsed["src"]:
+                        self.link_up = False
+                        self.link_peer = None
+                        self.link_path = []
+                        print("*** DISCONNECTED (by peer)")
+                elif ctl == CTL_DM:
+                    print(f"\nM: {parsed['src']} > {parsed['dest']}{path} DM")
+                else:
+                    print(
+                        f"\nM: {parsed['src']} > {parsed['dest']}{path} CTL=0x{ctl:02X}"
+                    )
+                print("cmd: ", end="", flush=True)
