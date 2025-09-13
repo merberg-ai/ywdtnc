@@ -1,134 +1,148 @@
-import asyncio
-import json
 import os
+import json
 import signal
+import asyncio
+
+from monitor import start_monitor
 from utils import hash_password, check_password
-from monitor import start_monitor, stop_monitor
-from ui import launch_ui, log_queue, set_ui_state
+from ui import launch_ui, set_ui_state
 
 CONFIG_FILE = "config.json"
 config = {}
-sysop_logged_in = False
 monitor_on = False
-
-# === Utility ===
-
-def save_config():
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config, f, indent=2)
+logged_in_user = "anonymous"
+monitor_task = None
 
 def load_config():
     global config
     if not os.path.exists(CONFIG_FILE):
         return False
-    with open(CONFIG_FILE, 'r') as f:
+    with open(CONFIG_FILE, "r") as f:
         config = json.load(f)
     return True
 
-def log(msg):
-    log_queue.put(msg)
-
-# === Command Handling ===
-
-async def handle_command(command):
-    global sysop_logged_in, monitor_on
-    cmd = command.strip().lower()
-
-    if cmd == "help":
-        log("Available commands: HELP, MONITOR [ON|OFF], LOGIN, LOGOUT, WHOAMI, SHUTDOWN, RESTART")
-
-    elif cmd.startswith("monitor"):
-        parts = cmd.split()
-        if len(parts) == 1:
-            log(f"Monitor is {'ON' if monitor_on else 'OFF'}")
-        elif parts[1] == "on":
-            if not monitor_on:
-                await start_monitor(config['direwolf_host'], config['direwolf_port'], log_queue)
-                monitor_on = True
-                set_ui_state(config.get("callsign", "N0CALL"), monitor_on, "sysop" if sysop_logged_in else "anonymous")
-                log("Monitor enabled")
-            else:
-                log("Monitor already ON")
-        elif parts[1] == "off":
-            if monitor_on:
-                stop_monitor()
-                monitor_on = False
-                set_ui_state(config.get("callsign", "N0CALL"), monitor_on, "sysop" if sysop_logged_in else "anonymous")
-                log("Monitor disabled")
-            else:
-                log("Monitor already OFF")
-
-    elif cmd == "whoami":
-        log(f"You are {'sysop' if sysop_logged_in else 'anonymous'}")
-
-    elif cmd == "logout":
-        if sysop_logged_in:
-            sysop_logged_in = False
-            set_ui_state(config.get("callsign", "N0CALL"), monitor_on, "anonymous")
-            log("Logged out")
-        else:
-            log("You are not logged in")
-
-    elif cmd == "login":
-        password = input("Sysop password: ")
-        if check_password(password, config.get("sysop_password", "")):
-            sysop_logged_in = True
-            set_ui_state(config.get("callsign", "N0CALL"), monitor_on, "sysop")
-            log("Login successful")
-        else:
-            log("Invalid password")
-
-    elif cmd == "shutdown":
-        if sysop_logged_in:
-            log("Goodbye!")
-            await asyncio.sleep(1)
-            os._exit(0)
-        else:
-            log("Sysop access required for shutdown")
-
-    elif cmd == "restart":
-        if sysop_logged_in:
-            log("Soft restarting...")
-            await asyncio.sleep(1)
-            main()
-        else:
-            log("Sysop access required for restart")
-
-    else:
-        log(f"Unknown command: {command}")
-
-# === Config Wizard ===
+def save_config():
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=4)
 
 async def config_wizard():
-    print("=== First-Time Setup ===")
-    config['callsign'] = input("Enter your station callsign: ").strip() or "N0CALL"
-
+    print("=== Initial Configuration Wizard ===")
+    config["system_callsign"] = input("Enter system callsign (e.g., KJ6YWD): ").strip()
     while True:
-        pw1 = input("Set sysop password: ").strip()
-        pw2 = input("Verify password: ").strip()
-        if not pw1 or pw1 != pw2:
-            print("Passwords do not match or are empty. Try again.")
-        else:
-            break
-    config['sysop_password'] = hash_password(pw1)
+        pw = input("Set sysop password: ").strip()
+        confirm = input("Confirm sysop password: ").strip()
+        if not pw:
+            print("Password cannot be blank.")
+            continue
+        if pw != confirm:
+            print("Passwords do not match.")
+            continue
+        config["sysop_password"] = hash_password(pw)
+        break
 
-    config['direwolf_host'] = input("Direwolf host (default 127.0.0.1): ").strip() or "127.0.0.1"
-    port_input = input("Direwolf TCP port (default 8001): ").strip()
-    config['direwolf_port'] = int(port_input) if port_input else 8001
+    host = input("Enter Direwolf host (default 127.0.0.1): ").strip()
+    config["direwolf_host"] = host if host else "127.0.0.1"
 
-    log_pref = input("Enable file logging? (y/n): ").strip().lower()
-    config['logging'] = log_pref == "y"
-    if config['logging']:
-        config['logfile'] = input("Log filename (default ywdtnc.log): ").strip() or "ywdtnc.log"
+    port = input("Enter Direwolf TCP port (default 8001): ").strip()
+    try:
+        config["direwolf_port"] = int(port) if port else 8001
+    except ValueError:
+        config["direwolf_port"] = 8001
+
+    log_choice = input("Enable logging to file? (y/n): ").strip().lower()
+    config["logging"] = log_choice == "y"
+    config["log_file"] = "ywdtnc.log"
 
     save_config()
+    print("Configuration saved.")
 
-# === Main ===
+def log_to_file(msg):
+    if config.get("logging"):
+        with open(config.get("log_file", "ywdtnc.log"), "a") as f:
+            f.write(msg + "\n")
+
+async def handle_command(command):
+    global monitor_on, monitor_task, logged_in_user
+
+    command = command.strip()
+    log_to_file(f"> {command}")
+    if not command:
+        return
+
+    parts = command.split()
+    cmd = parts[0].upper()
+
+    if cmd == "HELP":
+        ui_output("Available commands: MONITOR ON|OFF, LOGIN, LOGOUT, WHOAMI, SHUTDOWN, RESTART, EXIT")
+        return
+
+    if cmd == "MONITOR":
+        if len(parts) == 2:
+            if parts[1].upper() == "ON":
+                if not monitor_on:
+                    monitor_on = True
+                    monitor_task = asyncio.create_task(start_monitor(config["direwolf_host"], config["direwolf_port"]))
+                    ui_output("Monitor enabled.")
+            elif parts[1].upper() == "OFF":
+                if monitor_on:
+                    monitor_on = False
+                    if monitor_task:
+                        monitor_task.cancel()
+                    ui_output("Monitor disabled.")
+        else:
+            ui_output(f"Monitor is {'ON' if monitor_on else 'OFF'}.")
+
+    elif cmd == "LOGIN":
+        if logged_in_user == "sysop":
+            ui_output("Already logged in as sysop.")
+            return
+        pw = input("Enter sysop password: ")
+        if check_password(pw, config["sysop_password"]):
+            logged_in_user = "sysop"
+            set_ui_state(config.get("callsign", "N0CALL"), monitor_on, logged_in_user)
+            ui_output("Login successful.")
+        else:
+            ui_output("Invalid credentials.")
+
+    elif cmd == "LOGOUT":
+        if logged_in_user == "anonymous":
+            ui_output("You are not logged in.")
+        else:
+            logged_in_user = "anonymous"
+            set_ui_state(config.get("callsign", "N0CALL"), monitor_on, logged_in_user)
+            ui_output("Logged out.")
+
+    elif cmd == "WHOAMI":
+        ui_output(f"You are logged in as: {logged_in_user}")
+
+    elif cmd == "SHUTDOWN":
+        if logged_in_user != "sysop":
+            ui_output("Sysop privileges required.")
+            return
+        ui_output("Shutting down... Goodbye.")
+        raise urwid.ExitMainLoop()
+
+    elif cmd == "RESTART":
+        if logged_in_user != "sysop":
+            ui_output("Sysop privileges required.")
+            return
+        ui_output("Restarting UI...")
+        raise urwid.ExitMainLoop()  # Soft exit; app.py could be looped if desired
+
+    elif cmd == "EXIT":
+        ui_output("Use SHUTDOWN instead.")
+
+    else:
+        ui_output(f"Unknown command: {cmd}")
+
+def ui_output(text):
+    print(text)  # fallback
+    if 'ui_output_hook' in globals():
+        ui_output_hook(text)
 
 def signal_handler(sig, frame):
-    log("Shutting down...")
-    stop_monitor()
-    os._exit(0)
+    print("\nInterrupted. Exiting.")
+    exit(0)
 
 def main():
     signal.signal(signal.SIGINT, signal_handler)
@@ -137,8 +151,14 @@ def main():
         asyncio.run(config_wizard())
         load_config()
 
+    asyncio.set_event_loop(asyncio.new_event_loop())  # Ensure we have a running loop
+
     set_ui_state(config.get("callsign", "N0CALL"), monitor_on, "anonymous")
-    launch_ui(lambda cmd: asyncio.create_task(handle_command(cmd)), config.get("callsign", "N0CALL"))
+
+    def run_command(cmd):
+        asyncio.get_event_loop().create_task(handle_command(cmd))
+
+    launch_ui(run_command, config.get("callsign", "N0CALL"))
 
 if __name__ == "__main__":
     main()
