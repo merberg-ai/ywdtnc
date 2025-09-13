@@ -28,7 +28,7 @@ def direwolf_check(host, port):
 async def config_wizard():
     config = {}
     config['callsign'] = input("Enter system callsign (e.g., KJ6YWD): ").strip().upper() or "N0CALL"
-    
+
     while True:
         password = input("Set sysop password: ").strip()
         if password:

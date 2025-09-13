@@ -1,1 +1,1 @@
-# Placeholder: TNC command handling will go here
+# Placeholder for future AX.25 command processing.
