@@ -1,1 +1,1 @@
-# Placeholder for tnc_commands.py logic
+# Placeholder for TNC command handling logic
