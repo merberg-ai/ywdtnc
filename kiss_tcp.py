@@ -1,0 +1,25 @@
+import asyncio
+
+class KissTCP:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.reader = None
+        self.writer = None
+
+    async def connect(self):
+        self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+        print(f"Connected to KISS TNC at {self.host}:{self.port}")
+
+    async def send(self, data: bytes):
+        self.writer.write(data)
+        await self.writer.drain()
+
+    async def receive(self):
+        return await self.reader.read(1024)
+
+    async def close(self):
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
+            print("Disconnected from KISS TNC")
