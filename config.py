@@ -36,8 +36,20 @@ def first_time_setup():
     config = {}
     config["MYCALL"] = input("Enter system call sign (e.g., N0CALL): ").strip().upper()
     config["SYSOP"] = input("Enter sysop username: ").strip()
-    raw_pw = getpass.getpass("Enter sysop password: ").strip()
-    config["PASSWORD"] = hash_password(raw_pw)
+
+    # Require non-empty and confirmed password
+    while True:
+        pw1 = getpass.getpass("Enter sysop password: ").strip()
+        if not pw1:
+            print("Password cannot be empty.")
+            continue
+        pw2 = getpass.getpass("Confirm sysop password: ").strip()
+        if pw1 != pw2:
+            print("Passwords do not match. Try again.")
+            continue
+        break
+
+    config["PASSWORD"] = hash_password(pw1)
 
     config["DIREWOLF_ADDR"] = input("Direwolf IP address [127.0.0.1]: ").strip() or "127.0.0.1"
     port_input = input("Direwolf port [8001]: ").strip()

@@ -24,6 +24,9 @@ class TNCCommandParser:
             self.show_config()
 
         elif cmd == "SET" and len(tokens) >= 3:
+            if not self.sysop_logged_in:
+                print("Sysop login required to modify configuration.")
+                return
             key = tokens[1].upper()
             val = " ".join(tokens[2:])
             if key == "PASSWORD":
@@ -36,11 +39,17 @@ class TNCCommandParser:
             save_config(self.config)
 
         elif cmd == "RESET":
+            if not self.sysop_logged_in:
+                print("Sysop login required to reset configuration.")
+                return
             if os.path.exists(CONFIG_FILE):
                 os.remove(CONFIG_FILE)
                 print("Config removed. Restart to re-run setup.")
 
         elif cmd == "SHUTDOWN":
+            if not self.sysop_logged_in:
+                print("Sysop login required to shut down.")
+                return
             if self._is_local_console():
                 print("Gracefully shutting down YWD-TNC... 73 and good DX!")
                 sys.exit(0)
@@ -77,6 +86,9 @@ class TNCCommandParser:
             else:
                 print("Not logged in.")
 
+        elif cmd == "TESTLOGIN":
+            self._testlogin()
+
         else:
             print(f"Unknown command: {cmd}")
 
@@ -89,15 +101,16 @@ class TNCCommandParser:
     def print_help(self):
         print("Available commands:")
         print("  SHOW                     Show current config")
-        print("  SET <KEY> <VALUE>        Set config key")
+        print("  SET <KEY> <VALUE>        Set config key (sysop only)")
         print("  SAVE                     Save config to file")
-        print("  RESET                    Delete config and re-run setup")
-        print("  SHUTDOWN                 Gracefully exit (local console only)")
+        print("  RESET                    Delete config and re-run setup (sysop only)")
+        print("  SHUTDOWN                 Gracefully exit (sysop + local console only)")
         print("  RESTART                  Soft restart system state (sysop only)")
         print("  REBOOT                   Full system reboot (sysop only)")
         print("  LOGIN                    Authenticate as sysop")
         print("  LOGOUT                   End sysop session")
         print("  WHOAMI                   Show current logged-in user")
+        print("  TESTLOGIN                Test sysop credentials (no login)")
         print("  HELP                     Show this help message")
 
     def _is_local_console(self):
@@ -120,3 +133,11 @@ class TNCCommandParser:
             print(f"Welcome, {user}. You are now logged in.")
         else:
             print("Invalid credentials.")
+
+    def _testlogin(self):
+        user = input("Sysop username: ").strip()
+        pw = getpass.getpass("Sysop password: ").strip()
+        if user == self.config.get("SYSOP") and verify_password(self.config["PASSWORD"], pw):
+            print("Sysop credentials are valid.")
+        else:
+            print("Sysop credentials are invalid.")
