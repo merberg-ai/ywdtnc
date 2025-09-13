@@ -31,18 +31,13 @@ class KissTCP:
             if not chunk:
                 return None
             self.buffer.extend(chunk)
-
-            # Attempt to extract complete frames
             while FEND in self.buffer:
                 start = self.buffer.find(FEND)
                 end = self.buffer.find(FEND, start + 1)
                 if end == -1:
-                    break  # wait for more data
-
+                    break
                 raw_frame = self.buffer[start + 1:end]
-                del self.buffer[:end + 1]  # remove parsed frame from buffer
-
-                # Unescape KISS special bytes
+                del self.buffer[:end + 1]
                 frame = bytearray()
                 i = 0
                 while i < len(raw_frame):
@@ -58,7 +53,5 @@ class KissTCP:
                     else:
                         frame.append(raw_frame[i])
                         i += 1
-
-                # Strip first byte (KISS command byte: 0x00 = data frame)
                 if frame and frame[0] == 0x00:
-                    return frame[1:]  # return AX.25 payload
+                    return frame[1:]

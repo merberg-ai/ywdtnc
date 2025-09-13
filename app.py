@@ -1,62 +1,110 @@
 import asyncio
-import logging
+import os
+import json
+import getpass
+import signal
 from kiss_tcp import KissTCP
 from tnc_commands import TNCCommandParser
-from config import load_config, save_config
+from ax25 import parse_ax25
+from utils import hash_password, check_password
+import logging
 
-async def monitor_loop(kiss: KissTCP):
+CONFIG_FILE = "ywdtnc_config.json"
+
+def load_config():
+    if not os.path.exists(CONFIG_FILE):
+        return None
+    with open(CONFIG_FILE, "r") as f:
+        return json.load(f)
+
+def save_config(config):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+async def config_wizard():
+    print("Welcome to ywdtnc v1.0 Configuration Wizard")
+    config = {}
+    config['system_call'] = input("Enter system call: ").strip()
+    config['sysop_user'] = input("Enter sysop username: ").strip()
     while True:
+        password = getpass.getpass("Enter sysop password: ")
+        if password.strip() == "":
+            print("Password cannot be empty.")
+            continue
+        confirm = getpass.getpass("Confirm sysop password: ")
+        if password == confirm:
+            break
+        else:
+            print("Passwords do not match. Try again.")
+    config['sysop_password'] = hash_password(password)
+    config['direwolf_host'] = input("Enter Direwolf LAN address (e.g., 127.0.0.1): ").strip()
+    config['direwolf_port'] = int(input("Enter Direwolf TCP port (e.g., 8001): ").strip())
+    log_pref = input("Enable logging to file? (y/n): ").strip().lower()
+    config['logging'] = log_pref == 'y'
+    config['logfile'] = "ywdtnc.log"
+    save_config(config)
+    return config
+
+async def monitor_loop(kiss, config, parser):
+    while parser.monitor_enabled:
         try:
             frame = await kiss.receive()
-            if frame:
-                hex_str = " ".join(f"{b:02X}" for b in frame)
-                print(f"[MON] {hex_str}")
-                logging.info(f"[MON] {hex_str}")
+            if not frame:
+                continue
+            parsed = parse_ax25(frame)
+            if "error" in parsed:
+                continue
+            if parsed["ctrl"] == 0x03 and parsed["pid"] == 0xF0:  # UI frame
+                try:
+                    text = parsed["payload"].decode(errors="replace")
+                except:
+                    text = "<binary>"
+                print(f"[MON] {parsed['src']} > {parsed['dst']} [UI]: {text}")
+                if config.get("logging"):
+                    logging.info(f"[MON] {parsed['src']} > {parsed['dst']} [UI]: {text}")
         except Exception as e:
             print(f"[MONITOR ERROR] {e}")
             await asyncio.sleep(1)
 
 async def main():
     config = load_config()
+    if not config:
+        config = await config_wizard()
 
-    if config.get("LOGGING", False):
-        logfile = config.get("LOGFILE", "ywdtnc.log")
-        logging.basicConfig(filename=logfile, level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+    if config.get("logging"):
+        logging.basicConfig(filename=config.get("logfile", "ywdtnc.log"), level=logging.INFO)
+
+    kiss = KissTCP(config['direwolf_host'], config['direwolf_port'])
+    if await kiss.connect():
+        print(f"[INFO] Connected to Direwolf at {config['direwolf_host']}:{config['direwolf_port']}")
     else:
-        logging.basicConfig(level=logging.CRITICAL)
-
-    kiss = KissTCP(config["DIREWOLF_ADDR"], config["DIREWOLF_PORT"])
-
-    success = await kiss.connect()
-    if success:
-        logging.info(f"Direwolf connection successful: {config['DIREWOLF_ADDR']}:{config['DIREWOLF_PORT']}")
-        print(f"[INFO] Connected to Direwolf at {config['DIREWOLF_ADDR']}:{config['DIREWOLF_PORT']}")
-    else:
-        logging.error("Direwolf connection failed.")
-        print(f"[ERROR] Could not connect to Direwolf at {config['DIREWOLF_ADDR']}:{config['DIREWOLF_PORT']}")
-
-    print("YWD-TNC (Python TAPR TNC-2 Emulator)")
-    print("Version 1.0 by KJ6YWD")
-    print("Type 'help' for available commands.\n")
+        print("[ERROR] Could not connect to Direwolf.")
+        return
 
     parser = TNCCommandParser(kiss, config)
 
-    # Start live packet monitor in background
-    asyncio.create_task(monitor_loop(kiss))
+    async def conditional_monitor():
+        while True:
+            if parser.monitor_enabled:
+                await monitor_loop(kiss, config, parser)
+            else:
+                await asyncio.sleep(1)
+
+    asyncio.create_task(conditional_monitor())
+
+    def shutdown_handler(sig, frame):
+        print("
+[SHUTDOWN] Goodbye.")
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, shutdown_handler)
 
     while True:
         try:
-            line = input("> ").strip()
-            if line.lower() in ["exit", "quit"]:
-                print("Exiting.")
-                break
-            await parser.handle_command(line)
-        except (KeyboardInterrupt, EOFError):
-            print("\nInterrupted.")
-            break
-
-    await kiss.close()
-    save_config(config)
+            cmd = input("> ")
+            await parser.handle_command(cmd)
+        except KeyboardInterrupt:
+            shutdown_handler(None, None)
 
 if __name__ == "__main__":
     asyncio.run(main())
