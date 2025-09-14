@@ -154,16 +154,22 @@ class TNCState:
             self.link_path = path
             self._ua_event.clear()
             sabm = build_u_frame(self.mycall, self.link_peer, self.link_path, CTL_SABM)
+
             if self.kiss:
-                await self.kiss.send_data(sabm)
-                try:
-                    await asyncio.wait_for(self._ua_event.wait(), timeout=5.0)
-                    self.link_up = True
-                    return True, {"msg": f"*** CONNECTED to {self.link_peer}", "linked": True}
-                except asyncio.TimeoutError:
-                    self.link_peer = None
-                    self.link_path = []
-                    return True, "*** CONNECT failed (timeout)"
+                # Try up to 3 times, 5s each
+                for attempt in range(3):
+                    await self.kiss.send_data(sabm)
+                    try:
+                        await asyncio.wait_for(self._ua_event.wait(), timeout=5.0)
+                        self.link_up = True
+                        return True, {"msg": f"*** CONNECTED to {self.link_peer}", "linked": True}
+                    except asyncio.TimeoutError:
+                        if attempt < 2:
+                            continue
+                        else:
+                            self.link_peer = None
+                            self.link_path = []
+                            return True, "*** CONNECT failed (no UA after 3 tries)"
             else:
                 return True, "KISS not connected"
 
