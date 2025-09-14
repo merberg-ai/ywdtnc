@@ -21,11 +21,13 @@ class TNCState:
         self._send_ns = 0
         self._load_config()
 
+    # ----------------- Config persistence -----------------
     def _load_config(self):
         cfg = configparser.ConfigParser()
-        if os.path.exists(CFG_FILE):
+        if not os.path.exists(CFG_FILE):
+            return
+        try:
             cfg.read(CFG_FILE)
-            sect = cfg.get("tnc", {})
             self.mycall = cfg.get("tnc", "mycall", fallback=self.mycall)
             self.unproto_dest = cfg.get("tnc", "unproto_dest", fallback=None) or None
             p = cfg.get("tnc", "unproto_path", fallback="")
@@ -39,6 +41,8 @@ class TNCState:
             self.beacon_text = bt.encode() if bt else None
             self.kiss_host = cfg.get("tnc", "kiss_host", fallback=self.kiss_host)
             self.kiss_port = cfg.getint("tnc", "kiss_port", fallback=self.kiss_port)
+        except Exception:
+            pass
 
     def _save_config(self):
         cfg = configparser.ConfigParser()
@@ -55,6 +59,7 @@ class TNCState:
         }
         with open(CFG_FILE,"w") as f: cfg.write(f)
 
+    # ----------------- Lifecycle -----------------
     async def open(self):
         try:
             self.kiss = KISSClient(self.kiss_host,self.kiss_port)
@@ -71,6 +76,7 @@ class TNCState:
     async def reconnect(self): await self.close(); self._load_config(); return await self.open()
     async def set_converse(self,on:bool): self.converse=on
 
+    # ----------------- Commands -----------------
     async def handle_command(self,cmd:str,rest:str):
         if cmd=="UNPROTO":
             parts=rest.split()
@@ -85,7 +91,8 @@ class TNCState:
             return True,"*** Reconnected" if ok else "*** Reconnect failed"
         if cmd=="CONNECT":
             self.link_peer=rest.split()[0].upper() if rest else None
-            self._ua_event.clear(); sabm=build_u_frame(self.mycall,self.link_peer,[],CTL_SABM)
+            self._ua_event.clear()
+            sabm=build_u_frame(self.mycall,self.link_peer,[],CTL_SABM)
             if not self.kiss: return True,"KISS not connected"
             for _ in range(3):
                 await self.kiss.send_data(sabm)
@@ -108,6 +115,7 @@ class TNCState:
             except asyncio.TimeoutError: return True,"*** DISCONNECT timeout"
         return False,None
 
+    # ----------------- TX -----------------
     async def send_linked_line(self,line:str):
         if not self.link_up: print("*** Not connected"); return
         info=line.encode(); ns=self._send_ns; nr=0; self._send_ns=(self._send_ns+1)%8
@@ -126,6 +134,7 @@ class TNCState:
                 await self.kiss.send_data(frame)
             await asyncio.sleep(self.beacon_every)
 
+    # ----------------- RX/Monitor -----------------
     async def rx_loop(self):
         if not self.kiss: return
         async for _,payload in self.kiss.recv_frames():
