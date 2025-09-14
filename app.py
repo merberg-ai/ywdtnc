@@ -92,6 +92,7 @@ class Shell:
             "TNC-2 style commands (MVP 0.4):\n"
             "  MYCALL <CALL>                   Set your callsign-SSID (e.g., N0CALL-7)\n"
             "  UNPROTO <DEST> [VIA PATH]       Set UI dest & digipeater path\n"
+            "  UNPROTO <message>               Send one UI frame using current UNPROTO path\n"
             "  MONITOR ON|OFF                  Toggle monitor of heard frames\n"
             "  MONITOR DETAIL ON|OFF           Toggle hex dump alongside decoded text\n"
             "  TXDELAY <ms>                    Set TXDELAY (KISS)\n"

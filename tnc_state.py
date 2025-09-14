@@ -149,15 +149,29 @@ class TNCState:
                     return True, f"UNPROTO {self.unproto_dest} VIA {path}" if path else f"UNPROTO {self.unproto_dest}"
                 else:
                     return True, "UNPROTO not set"
-            dest, path = _parse_via(rest)
-            if not dest:
-                return True, "Usage: UNPROTO <DEST> [VIA DIGI1,DIGI2,...]"
-            self.unproto_dest = dest
-            self.unproto_path = path
-            self._save_config()
-            if path:
-                return True, f"UNPROTO {self.unproto_dest} VIA {','.join(path)}"
-            return True, f"UNPROTO {self.unproto_dest}"
+
+            tokens = rest.strip().split()
+            # If first token looks like config (callsign or VIA), treat as config
+            if tokens[0].upper() == "VIA" or "-" in tokens[0] or tokens[0].isalpha():
+                dest, path = _parse_via(rest)
+                if not dest:
+                    return True, "Usage: UNPROTO <DEST> [VIA DIGI1,DIGI2,...] or UNPROTO <text>"
+                self.unproto_dest = dest
+                self.unproto_path = path
+                self._save_config()
+                if path:
+                    return True, f"UNPROTO {self.unproto_dest} VIA {','.join(path)}"
+                return True, f"UNPROTO {self.unproto_dest}"
+            else:
+                # Otherwise, treat as message to send
+                if not self.unproto_dest:
+                    return True, "UNPROTO not set. Use UNPROTO <DEST> first."
+                info = rest.encode("utf-8", "ignore")
+                frame = build_ui_frame(self.mycall, self.unproto_dest, self.unproto_path, info)
+                if self.kiss:
+                    await self.kiss.send_data(frame)
+                    return True, f"UNPROTO sent to {self.unproto_dest}"
+                return True, "KISS not connected"
 
         if cmd == "MONITOR":
             arg = rest.strip().upper()
@@ -252,7 +266,6 @@ class TNCState:
                 print(header)
 
                 if parsed["info"]:
-                    # Always show human-readable
                     text = parsed["info"].decode("latin-1", "replace")
                     text = text.replace("\r", "\n").rstrip()
                     if text:
