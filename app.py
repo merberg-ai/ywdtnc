@@ -4,7 +4,7 @@ import sys
 import signal
 from tnc_state import TNCState
 
-BANNER = "MFJ-1270 Python Emulator (MVP) 0.4 — CMD mode. Type HELP."
+BANNER = "MFJ-1270 Python Emulator (MVP) 0.5 — CMD mode. Type HELP."
 
 class Shell:
     def __init__(self, tnc: TNCState):
@@ -30,11 +30,20 @@ class Shell:
                     line = await self._ainput("cmd: ")
                     if not await self.handle_cmd(line.strip()):
                         break
-                else:
+                elif self.mode == "CONV":
                     line = await self._ainput("")
                     await self.tnc.send_converse_line(line)
+                elif self.mode == "LINKED":
+                    line = await self._ainput("")
+                    await self.tnc.send_linked_line(line)
             except EOFError:
                 break
+            except KeyboardInterrupt:
+                if self.mode in ("CONV", "LINKED"):
+                    print("\n*** RETURN to CMD")
+                    self.mode = "CMD"
+                else:
+                    break
 
         await self.shutdown()
 
@@ -82,23 +91,31 @@ class Shell:
 
         handled, msg = await self.tnc.handle_command(ucmd, " ".join(rest))
         if msg:
-            print(msg)
+            if isinstance(msg, dict):
+                print(msg["msg"])
+                if msg.get("linked"):
+                    print("*** LINKED session active — hit Ctrl-C to return to CMD.")
+                    self.mode = "LINKED"
+            else:
+                print(msg)
+        if ucmd == "DISCONNECT":
+            self.mode = "CMD"
         if not handled:
             print("Eh? (Unknown command). Type HELP.")
         return True
 
     def print_help(self):
         print(
-            "TNC-2 style commands (MVP 0.4):\n"
+            "TNC-2 style commands (MVP 0.5):\n"
             "  MYCALL <CALL>                   Set your callsign-SSID (e.g., N0CALL-7)\n"
             "  UNPROTO <DEST> [VIA PATH]       Set UI dest & digipeater path\n"
             "  UNPROTO <message>               Send one UI frame using current UNPROTO path\n"
+            "  CONNECT <CALL> [VIA PATH]       Start LAPB link, enter LINKED mode on success\n"
+            "  DISCONNECT                      Send DISC, return to CMD mode\n"
             "  MONITOR ON|OFF                  Toggle monitor of heard frames\n"
             "  MONITOR DETAIL ON|OFF           Toggle hex dump alongside decoded text\n"
             "  TXDELAY <ms>                    Set TXDELAY (KISS)\n"
             "  BEACON EVERY <sec> TEXT <t>     Periodic UI beacon\n"
-            "  CONNECT <CALL> [VIA PATH]       LAPB handshake (SABM/UA) to peer\n"
-            "  DISCONNECT                      Send DISC and await UA\n"
             "  CONVERSE (or C)                 Enter converse (UI) mode\n"
             "  RECONNECT                       Reconnect to Direwolf using mfj1270.ini\n"
             "  HELP                            This list\n"
