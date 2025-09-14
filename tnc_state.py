@@ -25,6 +25,25 @@ def _parse_via(rest: str):
         path = [p for p in (",".join(path)).split(",") if p]
     return dest, path
 
+def _looks_like_callsign(token: str) -> bool:
+    token = token.upper()
+    if not token:
+        return False
+    # Callsigns: 1–6 letters/digits + optional -SSID (1–15)
+    parts = token.split("-")
+    if not parts[0].isalnum():
+        return False
+    if len(parts[0]) > 6:
+        return False
+    if len(parts) == 2:
+        if not parts[1].isdigit():
+            return False
+        if int(parts[1]) > 15:
+            return False
+    if len(parts) > 2:
+        return False
+    return True
+
 CFG_FILE = "mfj1270.ini"
 
 class TNCState:
@@ -151,8 +170,8 @@ class TNCState:
                     return True, "UNPROTO not set"
 
             tokens = rest.strip().split()
-            # If first token looks like config (callsign or VIA), treat as config
-            if tokens[0].upper() == "VIA" or "-" in tokens[0] or tokens[0].isalpha():
+            if _looks_like_callsign(tokens[0]) or tokens[0].upper() == "VIA":
+                # Treat as config
                 dest, path = _parse_via(rest)
                 if not dest:
                     return True, "Usage: UNPROTO <DEST> [VIA DIGI1,DIGI2,...] or UNPROTO <text>"
@@ -163,7 +182,7 @@ class TNCState:
                     return True, f"UNPROTO {self.unproto_dest} VIA {','.join(path)}"
                 return True, f"UNPROTO {self.unproto_dest}"
             else:
-                # Otherwise, treat as message to send
+                # Treat as a message to send
                 if not self.unproto_dest:
                     return True, "UNPROTO not set. Use UNPROTO <DEST> first."
                 info = rest.encode("utf-8", "ignore")
