@@ -29,7 +29,6 @@ def _looks_like_callsign(token: str) -> bool:
     token = token.upper()
     if not token:
         return False
-    # Callsigns: 1–6 letters/digits + optional -SSID (1–15)
     parts = token.split("-")
     if not parts[0].isalnum():
         return False
@@ -171,10 +170,9 @@ class TNCState:
 
             tokens = rest.strip().split()
             if _looks_like_callsign(tokens[0]) or tokens[0].upper() == "VIA":
-                # Treat as config
                 dest, path = _parse_via(rest)
                 if not dest:
-                    return True, "Usage: UNPROTO <DEST> [VIA DIGI1,DIGI2,...] or UNPROTO <text>"
+                    return True, "Usage: UNPROTO <DEST> [VIA DIGI...] or UNPROTO <text>"
                 self.unproto_dest = dest
                 self.unproto_path = path
                 self._save_config()
@@ -182,7 +180,6 @@ class TNCState:
                     return True, f"UNPROTO {self.unproto_dest} VIA {','.join(path)}"
                 return True, f"UNPROTO {self.unproto_dest}"
             else:
-                # Treat as a message to send
                 if not self.unproto_dest:
                     return True, "UNPROTO not set. Use UNPROTO <DEST> first."
                 info = rest.encode("utf-8", "ignore")
@@ -190,6 +187,49 @@ class TNCState:
                 if self.kiss:
                     await self.kiss.send_data(frame)
                     return True, f"UNPROTO sent to {self.unproto_dest}"
+                return True, "KISS not connected"
+
+        if cmd == "CONNECT":
+            if not rest.strip():
+                return True, "Usage: CONNECT <CALL> [VIA DIGI1,DIGI2,...]"
+            dest, path = _parse_via(rest)
+            if not dest:
+                return True, "Usage: CONNECT <CALL> [VIA DIGI1,DIGI2,...]"
+
+            self.link_peer = dest
+            self.link_path = path
+            self._ua_event.clear()
+            sabm = build_u_frame(self.mycall, self.link_peer, self.link_path, CTL_SABM)
+            if self.kiss:
+                await self.kiss.send_data(sabm)
+                try:
+                    await asyncio.wait_for(self._ua_event.wait(), timeout=5.0)
+                    self.link_up = True
+                    return True, f"*** CONNECTED to {self.link_peer}"
+                except asyncio.TimeoutError:
+                    self.link_peer = None
+                    self.link_path = []
+                    return True, "*** CONNECT failed (timeout)"
+            else:
+                return True, "KISS not connected"
+
+        if cmd == "DISCONNECT":
+            if not self.link_up or not self.link_peer:
+                return True, "*** No active connection"
+            self._disc_ua_event.clear()
+            disc = build_u_frame(self.mycall, self.link_peer, self.link_path, CTL_DISC)
+            if self.kiss:
+                await self.kiss.send_data(disc)
+                try:
+                    await asyncio.wait_for(self._disc_ua_event.wait(), timeout=5.0)
+                    peer = self.link_peer
+                    self.link_up = False
+                    self.link_peer = None
+                    self.link_path = []
+                    return True, f"*** DISCONNECTED from {peer}"
+                except asyncio.TimeoutError:
+                    return True, "*** DISCONNECT failed (timeout)"
+            else:
                 return True, "KISS not connected"
 
         if cmd == "MONITOR":
@@ -244,6 +284,13 @@ class TNCState:
 
             ctl = parsed["ctl"]
             path = f" VIA {','.join(parsed['path'])}" if parsed["path"] else ""
+
+            # Handle link-layer responses
+            if ctl == CTL_UA and parsed["src"] == self.link_peer:
+                self._ua_event.set()
+                self._disc_ua_event.set()
+            if ctl == CTL_DM and parsed["src"] == self.link_peer:
+                self._disc_ua_event.set()
 
             if self.monitor_on:
                 label = None
