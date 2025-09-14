@@ -58,39 +58,46 @@ def build_i_frame(src: str, dest: str, path: list[str], ns: int, nr: int, info: 
     frame.extend(info)
     return bytes(frame)
 
-# --- Frame parser (simplified) ---
+# --- Frame parser (correct address parsing) ---
 
 def parse_ax25(frame: bytes):
     if len(frame) < 16:
         return None
     try:
-        addr_len = ((len(frame) - 2) // 7) * 7
-        addr_bytes = frame[: addr_len]
-        ctl = frame[addr_len]
-        pid = None
-        info = b""
-        if (ctl & 0x03) == 0x00 or ctl == 0x03:  # I-frame or UI-frame
-            pid = frame[addr_len + 1]
-            info = frame[addr_len + 2 :]
-        elif ctl & 0x03 == 0x01:  # S-frame
-            pid = None
-            info = b""
-        else:
-            pid = None
-            info = b""
-
-        # decode addresses
         addrs = []
-        for i in range(0, addr_len, 7):
-            raw = addr_bytes[i : i + 7]
+        i = 0
+        # Parse addresses until extension bit set
+        while True:
+            raw = frame[i:i+7]
+            if len(raw) < 7:
+                return None
             call = "".join(chr(b >> 1) for b in raw[:6]).strip()
             ssid = (raw[6] >> 1) & 0x0F
             if ssid:
                 call = f"{call}-{ssid}"
             addrs.append(call)
+            i += 7
+            if raw[6] & 0x01:  # Last address
+                break
+
         dest = addrs[0]
         src = addrs[1]
         path = addrs[2:] if len(addrs) > 2 else []
+
+        ctl = frame[i]
+        i += 1
+        pid = None
+        info = b""
+
+        if ctl & 0x01 == 0 or ctl == CTL_UI:
+            if i < len(frame):
+                pid = frame[i]
+                i += 1
+            if i < len(frame):
+                info = frame[i:]
+        else:
+            if i < len(frame):
+                info = frame[i:]
 
         return {
             "src": src,
