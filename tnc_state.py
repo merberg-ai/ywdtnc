@@ -156,7 +156,6 @@ class TNCState:
             sabm = build_u_frame(self.mycall, self.link_peer, self.link_path, CTL_SABM)
 
             if self.kiss:
-                # Try up to 3 times, 5s each
                 for attempt in range(3):
                     await self.kiss.send_data(sabm)
                     try:
@@ -240,8 +239,13 @@ class TNCState:
 
             # Handle link-layer responses
             if ctl == CTL_UA and parsed["src"] == self.link_peer:
+                self.link_up = True
                 self._ua_event.set()
                 self._disc_ua_event.set()
+            elif (ctl & 0x01) == 0 and parsed["src"] == self.link_peer:
+                # Got an I-frame from peer before UA, accept as connected
+                self.link_up = True
+                self._ua_event.set()
             if ctl == CTL_DM and parsed["src"] == self.link_peer:
                 self._disc_ua_event.set()
 
