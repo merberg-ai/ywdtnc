@@ -5,6 +5,7 @@ from kiss import KISSClient
 from ax25 import (
     build_ui_frame,
     build_u_frame,
+    build_i_frame,
     parse_ax25,
     CTL_UI,
     CTL_SABM,
@@ -196,8 +197,7 @@ class TNCState:
         ns = self._send_ns
         nr = 0
         self._send_ns = (self._send_ns + 1) % 8
-        ctl = (ns << 1) | (nr << 5)
-        frame = build_u_frame(self.mycall, self.link_peer, self.link_path, ctl, info)
+        frame = build_i_frame(self.mycall, self.link_peer, self.link_path, ns, nr, info)
         if self.kiss:
             await self.kiss.send_data(frame)
 

@@ -1,86 +1,111 @@
-CTL_UI   = 0x03
-PID_NOPROTO = 0xF0  # No layer 3 (text)
+# ax25.py — AX.25 frame builder/parser for MFJ-1270 emulator
 
-# LAPB/AX.25 control values (mod-8, 1-byte controls)
-CTL_SABM = 0x2F  # Set Asynchronous Balanced Mode (P=1)
-CTL_UA   = 0x63  # Unnumbered Acknowledge (F=1 typical in response)
-CTL_DISC = 0x43  # Disconnect
-CTL_DM   = 0x0F  # Disconnected Mode
-
-def _pack_addr(callsign: str, last: bool) -> bytes:
-    if "-" in callsign:
-        call, ssid_str = callsign.split("-", 1)
+def _encode_callsign(call: str, last: bool = False) -> bytes:
+    """
+    Encode a callsign+SSID (e.g. "KJ6YWD-7") into AX.25 address bytes.
+    """
+    call = call.upper()
+    if "-" in call:
+        base, ssid = call.split("-", 1)
         try:
-            ssid = int(ssid_str)
+            ssid = int(ssid)
         except ValueError:
             ssid = 0
     else:
-        call, ssid = callsign, 0
-    call = (call.upper() + "      ")[:6]
-    b = bytearray()
-    for ch in call:
-        b.append(ord(ch) << 1)
-    ssid_byte = 0x60 | ((ssid & 0x0F) << 1)
-    if last:
-        ssid_byte |= 0x01
-    b.append(ssid_byte)
-    return bytes(b)
+        base, ssid = call, 0
+    base = (base + "      ")[:6]  # pad to 6
+    addr = bytearray()
+    for c in base:
+        addr.append(ord(c) << 1)
+    addr.append(((ssid & 0x0F) << 1) | 0x60 | (0x01 if last else 0x00))
+    return bytes(addr)
 
-def _addr_block(src: str, dest: str, path: list[str] | None, ctl_last: bool = True) -> bytes:
-    if path is None:
-        path = []
-    addrs = bytearray()
-    all_calls = [dest, src] + path
-    for i, call in enumerate(all_calls):
-        last = (i == len(all_calls) - 1)
-        addrs.extend(_pack_addr(call, last=last if ctl_last else False))
-    return bytes(addrs)
+def _build_header(src: str, dest: str, path: list[str]) -> bytearray:
+    """
+    Build AX.25 address header (dest, src, digis).
+    """
+    frame = bytearray()
+    # Destination
+    frame.extend(_encode_callsign(dest, last=False))
+    # Source
+    if not path:
+        frame.extend(_encode_callsign(src, last=True))
+    else:
+        frame.extend(_encode_callsign(src, last=False))
+        for i, digi in enumerate(path):
+            frame.extend(_encode_callsign(digi, last=(i == len(path) - 1)))
+    return frame
 
-def build_ui_frame(src: str, dest: str, path: list[str] | None, info: bytes) -> bytes:
-    return _addr_block(src, dest, path, ctl_last=True) + bytes([CTL_UI, PID_NOPROTO]) + info
+# --- Frame builders ---
 
-def build_u_frame(src: str, dest: str, path: list[str] | None, ctl: int) -> bytes:
-    # Unnumbered frames (U) have only a control byte after address block; no PID, no info.
-    return _addr_block(src, dest, path, ctl_last=True) + bytes([ctl])
+def build_ui_frame(src: str, dest: str, path: list[str], info: bytes) -> bytes:
+    frame = _build_header(src, dest, path)
+    frame.append(0x03)  # UI control
+    frame.append(0xF0)  # no layer 3
+    frame.extend(info)
+    return bytes(frame)
 
-def _unpack_one_addr(b: bytes, off: int):
-    raw = b[off:off+7]
-    if len(raw) < 7:
-        return None, off
-    call = "".join(chr((raw[i] >> 1) & 0x7F) for i in range(6)).strip()
-    ssid = (raw[6] >> 1) & 0x0F
-    last = bool(raw[6] & 0x01)
-    if ssid:
-        call = f"{call}-{ssid}"
-    return call, off + 7, last
+def build_u_frame(src: str, dest: str, path: list[str], ctl: int) -> bytes:
+    frame = _build_header(src, dest, path)
+    frame.append(ctl)  # SABM, UA, DISC, DM, etc.
+    return bytes(frame)
+
+def build_i_frame(src: str, dest: str, path: list[str], ns: int, nr: int, info: bytes) -> bytes:
+    frame = _build_header(src, dest, path)
+    ctl = (ns << 1) | (nr << 5)  # I-frame control byte
+    frame.append(ctl)
+    frame.append(0xF0)  # PID = no layer 3
+    frame.extend(info)
+    return bytes(frame)
+
+# --- Frame parser (simplified) ---
 
 def parse_ax25(frame: bytes):
-    off = 0
-    addrs = []
-    last = False
-    while off + 7 <= len(frame):
-        call, off, last = _unpack_one_addr(frame, off)
-        if call is None:
-            break
-        addrs.append(call)
-        if last:
-            break
-    if len(addrs) < 2 or off + 1 > len(frame):
+    if len(frame) < 16:
         return None
-    dest = addrs[0]; src = addrs[1]
-    path = addrs[2:] if len(addrs) > 2 else []
-
-    ctl = frame[off]
-    # If UI (I/G?), expect PID
-    if ctl == CTL_UI:
-        if off + 2 > len(frame):
+    try:
+        addr_len = ((len(frame) - 2) // 7) * 7
+        addr_bytes = frame[: addr_len]
+        ctl = frame[addr_len]
+        pid = None
+        info = b""
+        if (ctl & 0x03) == 0x00 or ctl == 0x03:  # I-frame or UI-frame
+            pid = frame[addr_len + 1]
+            info = frame[addr_len + 2 :]
+        elif ctl & 0x03 == 0x01:  # S-frame
             pid = None
             info = b""
         else:
-            pid = frame[off+1]
-            info = frame[off+2:] if off+2 <= len(frame) else b""
-    else:
-        pid = None
-        info = frame[off+1:] if off+1 <= len(frame) else b""
+            pid = None
+            info = b""
 
-    return {"dest": dest, "src": src, "path": path, "ctl": ctl, "pid": pid, "info": info}
+        # decode addresses
+        addrs = []
+        for i in range(0, addr_len, 7):
+            raw = addr_bytes[i : i + 7]
+            call = "".join(chr(b >> 1) for b in raw[:6]).strip()
+            ssid = (raw[6] >> 1) & 0x0F
+            if ssid:
+                call = f"{call}-{ssid}"
+            addrs.append(call)
+        dest = addrs[0]
+        src = addrs[1]
+        path = addrs[2:] if len(addrs) > 2 else []
+
+        return {
+            "src": src,
+            "dest": dest,
+            "path": path,
+            "ctl": ctl,
+            "pid": pid,
+            "info": info,
+        }
+    except Exception:
+        return None
+
+# --- Control constants ---
+CTL_UI = 0x03
+CTL_SABM = 0x2F
+CTL_UA = 0x63
+CTL_DISC = 0x43
+CTL_DM = 0x0F
