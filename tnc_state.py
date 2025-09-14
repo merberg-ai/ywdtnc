@@ -185,8 +185,6 @@ class TNCState:
             else:
                 return True, "KISS not connected"
 
-        # … all other handlers unchanged …
-
         return False, None
 
     # ----------------- Connected-mode TX -----------------
@@ -203,4 +201,90 @@ class TNCState:
         if self.kiss:
             await self.kiss.send_data(frame)
 
-    # … rx_loop etc unchanged …
+    # ----------------- Converse/UI TX -----------------
+    async def send_converse_line(self, line: str):
+        if not self.unproto_dest:
+            print("UNPROTO not set.")
+            return
+        info = line.encode("utf-8", "ignore")
+        frame = build_ui_frame(self.mycall, self.unproto_dest, self.unproto_path, info)
+        if self.kiss:
+            await self.kiss.send_data(frame)
+
+    async def beacon_loop(self):
+        while self.beacon_every is not None:
+            if self.beacon_text and self.unproto_dest and self.kiss:
+                frame = build_ui_frame(
+                    self.mycall, self.unproto_dest, self.unproto_path, self.beacon_text
+                )
+                await self.kiss.send_data(frame)
+            await asyncio.sleep(self.beacon_every)
+
+    # ----------------- RX/Monitor -----------------
+    async def rx_loop(self):
+        if not self.kiss:
+            return
+        async for port_id, payload in self.kiss.recv_frames():
+            parsed = parse_ax25(payload)
+            if not parsed:
+                continue
+
+            ctl = parsed["ctl"]
+            path = f" VIA {','.join(parsed['path'])}" if parsed["path"] else ""
+
+            # Handle link-layer responses
+            if ctl == CTL_UA and parsed["src"] == self.link_peer:
+                self._ua_event.set()
+                self._disc_ua_event.set()
+            if ctl == CTL_DM and parsed["src"] == self.link_peer:
+                self._disc_ua_event.set()
+
+            if self.monitor_on:
+                label = None
+                seq_info = ""
+                if ctl == CTL_UI:
+                    label = "UI"
+                elif ctl == CTL_SABM:
+                    label = "SABM"
+                elif ctl == CTL_UA:
+                    label = "UA"
+                elif ctl == CTL_DISC:
+                    label = "DISC"
+                elif ctl == CTL_DM:
+                    label = "DM"
+                else:
+                    if ctl & 0x01 == 0:
+                        ns = (ctl >> 1) & 0x07
+                        nr = (ctl >> 5) & 0x07
+                        label = "I"
+                        seq_info = f" N(S)={ns} N(R)={nr}"
+                    elif ctl & 0x03 == 0x01:
+                        s_type = (ctl >> 2) & 0x03
+                        nr = (ctl >> 5) & 0x07
+                        if s_type == 0:
+                            label = "RR"
+                        elif s_type == 1:
+                            label = "RNR"
+                        elif s_type == 2:
+                            label = "REJ"
+                        else:
+                            label = "S?"
+                        seq_info = f" N(R)={nr}"
+                    else:
+                        label = f"CTL=0x{ctl:02X}"
+
+                header = f"\nM: {parsed['src']} > {parsed['dest']}{path} {label}{seq_info}"
+                if parsed["pid"] is not None and ctl == CTL_UI:
+                    header += f" PID=0x{parsed['pid']:02X}"
+                print(header)
+
+                if parsed["info"]:
+                    text = parsed["info"].decode("latin-1", "replace")
+                    text = text.replace("\r", "\n").rstrip()
+                    if text:
+                        for line in text.splitlines():
+                            print("   " + line)
+                    if self.monitor_detail:
+                        print("   [hex] " + parsed["info"].hex())
+
+                print("cmd: ", end="", flush=True)
